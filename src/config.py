@@ -5,7 +5,6 @@ import torch
 from pathlib import Path
 
 class Config:
-    """Tutti i parametri della pipeline in un unico posto, facili da modificare."""
     BASE_DIR = Path(__file__).resolve().parent.parent # punta all directory base
 
     # --- Dataset 1 ---
@@ -52,13 +51,13 @@ class Config:
     
 
     # --- Early Stopping ---
-    ES_PATIENCE  = 14    # usiamo un numero alti in quanto con il cosine il lr scende lentamente, prima era 14
-    ES_MIN_DELTA = 1e-3 # miglioramento minimo considerato significativo, prima era  1e-3
+    ES_PATIENCE  = 14    # usiamo un numeri alti in quanto con il cosine il lr scende lentamente
+    ES_MIN_DELTA = 1e-3 # miglioramento minimo considerato significativo
 
 
     # --- Postprocessing ---
     SEG_THRESHOLD = 0.15 # Threshold di segmentazione, usato per la IoU
-    CLS_THRESHOLD = 0.5 # Threshold di clssificazione binaria 0.5
+    CLS_THRESHOLD = 0.5 # Threshold di classificazione binaria 0.5
 
 
     # --- Varie ---
