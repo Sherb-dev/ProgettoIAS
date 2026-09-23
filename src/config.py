@@ -7,6 +7,9 @@ from pathlib import Path
 class Config:
     BASE_DIR = Path(__file__).resolve().parent.parent # punta all directory base
 
+    # -- TEST ---
+    DATA_DIR = None
+
     # --- Dataset 1 ---
     CSV_PATH = f"{BASE_DIR}/dataset/COCO/dataset.csv"
     ORIG_DIR = f"{BASE_DIR}/dataset/COCO/0" # Originali
@@ -63,3 +66,8 @@ class Config:
     # --- Varie ---
     SEED = 42 # Influenza tutto ciò che ha bisogno di un seed
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+    def set_new_data(self, new_data_dir, csv_name):
+        import os
+        self.DATADIR = new_data_dir
+        self.CSV_PATH = os.path.join(new_data_dir, csv_name)
