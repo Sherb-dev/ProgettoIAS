@@ -78,3 +78,6 @@ class Config:
 
     def set_undersampling(self, limit):
         self.DATASET_SIZE = limit
+
+    def set_num_workers(self, num_workers):
+        NUM_WORKERS = num_workers
