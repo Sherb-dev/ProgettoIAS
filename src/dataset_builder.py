@@ -22,9 +22,9 @@ class SagiDatasetBuilder:
         for _, r in df_filtered.iterrows():
             # Il CSV presenta percorsi con backslash tipici di Windows (es. sagid\train\...)
             # Sostituiamo i backslash con il separatore del sistema operativo corrente
-            src_rel = str(r["src_path"]).replace('\\', os.sep)
-            img_rel = str(r["img_path"]).replace('\\', os.sep)
-            mask_rel = str(r["mask_path"]).replace('\\', os.sep)
+            src_rel = str(r["src_path"]).replace("sagid\\", "", 1).replace("\\", os.sep)
+            img_rel = str(r["img_path"]).replace("sagid\\", "", 1).replace("\\", os.sep)
+            mask_rel = str(r["mask_path"]).replace("sagid\\", "", 1).replace("\\", os.sep)
 
             # Costruzione dei percorsi assoluti
             orig_path = os.path.join(self.cfg.DATA_DIR, src_rel)
