@@ -9,55 +9,44 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 from torch.utils.data import Dataset
 
-#applichiamo le trasformazioni a immagine e maschera simultaneamente
 class JointTransform:
-    def __init__(self, size, train, aggressive_mode = True):
+    def __init__(self, size, train=True):
         self.size = size
         self.train = train
-        self.aggressive_mode = aggressive_mode
 
     def __call__(self, image: Image.Image, mask: Image.Image):
-        #resize di base applicato sempre
+        # 1. Resize iniziale
         image = TF.resize(image, (self.size, self.size), interpolation=TF.InterpolationMode.BILINEAR)
         mask  = TF.resize(mask,  (self.size, self.size), interpolation=TF.InterpolationMode.NEAREST)
 
         if self.train:
-            if self.aggressive_mode:
-                #applichiamo sempre questa modalità di data aumentation al training set
+            # Flips geometrici sicuri (non introducono bordi neri)
+            if random.random() > 0.5:
+                image = TF.hflip(image)
+                mask  = TF.hflip(mask)
+            if random.random() > 0.5:
+                image = TF.vflip(image)
+                mask  = TF.vflip(mask)
 
-                #colore
-                image = TF.adjust_hue(image, random.uniform(-0.1, 0.1))
-                image = TF.adjust_saturation(image, random.uniform(0.7, 1.3))
+            # Simulazione perdita di risoluzione / compressione (SOLO sull'immagine)
+            if random.random() > 0.5:
+                small_size = self.size // 2
+                image = TF.resize(image, (small_size, small_size), interpolation=TF.InterpolationMode.BILINEAR)
+                image = TF.resize(image, (self.size, self.size), interpolation=TF.InterpolationMode.BILINEAR)
 
-                #grayscale casuale
-                if random.random() > 0.8:
-                    image = TF.rgb_to_grayscale(image, num_output_channels=3)
+            # Variazioni fotometriche (non toccano la maschera)
+            image = TF.adjust_brightness(image, random.uniform(0.85, 1.15))
+            image = TF.adjust_contrast(image,   random.uniform(0.85, 1.15))
+            image = TF.adjust_saturation(image, random.uniform(0.85, 1.15))
+            image = TF.adjust_hue(image,        random.uniform(-0.05, 0.05))
 
-                #multi-scala: distrugge le alte frequenze e forza la rete a ragionare su strutture a bassa frequenza
-                if random.random() > 0.5:
-                    small_size = self.size // 2  #da 256 a 128
-                    image = TF.resize(image, (small_size, small_size), interpolation=TF.InterpolationMode.BILINEAR)
-                    image = TF.resize(image, (self.size,  self.size), interpolation=TF.InterpolationMode.BILINEAR)
-                    mask  = TF.resize(mask,  (small_size, small_size), interpolation=TF.InterpolationMode.NEAREST)
-                    mask  = TF.resize(mask,  (self.size,  self.size), interpolation=TF.InterpolationMode.NEAREST)
+            if random.random() > 0.85:
+                image = TF.rgb_to_grayscale(image, num_output_channels=3)
 
-            else:
-                #data augmentation standard, l'abbiamo usato solo nei test ma non è risultato efficace 
-                if random.random() > 0.5:
-                    image, mask = TF.hflip(image), TF.hflip(mask)
-                if random.random() > 0.5:
-                    image, mask = TF.vflip(image), TF.vflip(mask)
-
-                angle = random.uniform(-15, 15)
-                image = TF.rotate(image, angle)
-                mask  = TF.rotate(mask, angle, interpolation=TF.InterpolationMode.NEAREST)
-
-                image = TF.adjust_brightness(image, random.uniform(0.8, 1.2))
-                image = TF.adjust_contrast(image,   random.uniform(0.8, 1.2))
-
-        #applichiamo sempre la normalizzazione
+        # 2. Conversione a tensore
         image = TF.to_tensor(image)
-        image = (image - 0.5) / 0.5
+        # Normalizzazione standard
+        image = TF.normalize(image, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
         mask = TF.to_tensor(mask)
         mask = (mask > 0.5).float()

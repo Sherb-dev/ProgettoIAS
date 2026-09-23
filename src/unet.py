@@ -5,7 +5,7 @@ import torch.optim as optim
 import torchvision.transforms.functional as TF
 
 #blocco di base
-class ConvBlock(nn.Module):
+class ConvBlock_old(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
         #due strati convoluzionali in sequenza
@@ -18,6 +18,24 @@ class ConvBlock(nn.Module):
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True)
         )
+    def forward(self, x):
+        return self.conv(x)
+
+class ConvBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, dropout_prob=0.0):
+        super().__init__()
+        layers = [
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+        ]
+        if dropout_prob > 0.0:
+            layers.append(nn.Dropout2d(dropout_prob)) # Dropout2d per feature map convoluzionali
+        self.conv = nn.Sequential(*layers)
+
     def forward(self, x):
         return self.conv(x)
 
@@ -87,11 +105,11 @@ class UNet(nn.Module):
         self.enc2 = EncoderBlock(c1, c2)
         self.enc3 = EncoderBlock(c2, c3)
 
-        #bottleneck
-        self.bottleneck = ConvBlock(c3, c4)
+        # bottleneck con dropout
+        self.bottleneck = ConvBlock(c3, c4, dropout_prob=0.2)
 
-        #decoder
-        self.dec1 = DecoderBlock(c4, c3, c3, use_attention=use_attention)
+        # decoder con dropout nel primo stadio
+        self.dec1 = DecoderBlock(c4, c3, c3, use_attention=use_attention) # puoi passare dropout_prob anche qui
         self.dec2 = DecoderBlock(c3, c2, c2, use_attention=use_attention)
         self.dec3 = DecoderBlock(c2, c1, c1, use_attention=use_attention)
 

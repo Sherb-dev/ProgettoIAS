@@ -1,6 +1,6 @@
 import os
 import random
- 
+
 import numpy as np
 import pandas as pd
 import torch
@@ -14,10 +14,10 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import matplotlib.pyplot as plt
- 
+
 from src.loss import *
 from src.config import Config
- 
+
 #implementiamo a mano l'early stopping perchè non esiste nativamente come in keras
 #fermiamo il training se la loss in validazione non migliora per n epoche
 class EarlyStopping:
@@ -27,7 +27,7 @@ class EarlyStopping:
         self.counter = 0
         self.best_loss = float("inf") #inizializziamo la best loss a +infinito in modo che ci sia a prescindere un miglioramento nella prima epoca
         self.should_stop = False
- 
+
     def step(self, val_loss):
         if val_loss < self.best_loss - self.min_delta:
             self.best_loss = val_loss
@@ -37,18 +37,18 @@ class EarlyStopping:
             if self.counter >= self.patience:
                 self.should_stop = True #se per n epoche non c'è stato un miglioramento fermiamo il modello
         return self.should_stop
- 
- 
+
+
 class Trainer:
     def __init__(self, model, cfg, model_name):
         self.model = model.to(cfg.DEVICE)
         self.cfg = cfg
         self.model_name = model_name
- 
+
         self.optimizer = optim.AdamW(
             self.model.parameters(), lr=cfg.LR, weight_decay=1e-4
         ) #usiamo l'ottimizzatore Adam weight decay, che penalizza i pesi troppo grandi per evitare l'overfitting
- 
+
         #usiamo un doppio scheduler per modificare il learning rate durante l'addestramento
         self.scheduler = optim.lr_scheduler.SequentialLR(
             self.optimizer,
@@ -62,49 +62,49 @@ class Trainer:
             ],
             milestones=[5]
         )
- 
+
         #early stopping
         self.early_stopping = EarlyStopping(
             patience=cfg.ES_PATIENCE,
             min_delta=cfg.ES_MIN_DELTA
         )
- 
+
         self.history = {"train_loss": [], "val_loss": []}
         self.best_val_loss = float("inf")
- 
+
     def _run_epoch(self, loader: DataLoader, train, desc):
         self.model.train() if train else self.model.eval() #modalità
         total_loss = 0.0
- 
+
         context = torch.enable_grad() if train else torch.no_grad() #aggiorniamo i pesi (gradienti attivi) solo se train=True
         with context:
-            for image, mask, label in tqdm(loader, desc=desc): #il loader fornisce un batch alla volta
+            for image, mask, label in tqdm(loader, desc=desc, mininterval=10.0): #il loader fornisce un batch alla volta
                 #trasferiamo le immagini dalla cpu alla gpu
                 image = image.to(self.cfg.DEVICE)
                 mask  = mask.to(self.cfg.DEVICE)
                 label = label.to(self.cfg.DEVICE)
- 
+
                 if train:
                     self.optimizer.zero_grad() #per ogni batch ripuliamo i gradienti per evitare che si sommino
- 
+
                 seg_logits, cls_logits = self.model(image) #output di segmentazione e classificazione della rete
                 loss = combined_loss(seg_logits, mask, cls_logits, label) #calcoliamo la loss sul batch
- 
+
                 #backpropagation
                 if train:
                     loss.backward()
                     self.optimizer.step()
-               
+
                 #loss totale del batch corrente
                 total_loss += loss.item() * image.size(0)
- 
+
         return total_loss / len(loader.dataset) #restituisce l'errore medio dell'epoca
- 
- 
+
+
     def fit(self, train_loader: DataLoader, val_loader: DataLoader):
         os.makedirs(self.cfg.CHECKPOINT_DIR, exist_ok=True)
         model_name = self.model_name
- 
+
         for epoch in range(self.cfg.EPOCHS):
             #per ogni epoca addestriamo e validiamo i risultati
             train_loss = self._run_epoch(
@@ -115,41 +115,56 @@ class Trainer:
                 val_loader, train=False,
                 desc=f"[{model_name}] Epoch {epoch+1}/{self.cfg.EPOCHS} val"
             )
- 
+
             self.scheduler.step() #aggiorniamo il learning rate
             self.history["train_loss"].append(train_loss)
             self.history["val_loss"].append(val_loss)
- 
+
             #stampiamo le metriche dell'epoca corrente
             print(
                 f"[{model_name}] Epoch {epoch+1}: "
                 f"train_loss={train_loss:.4f}, val_loss={val_loss:.4f} | "
                 f"ES counter={self.early_stopping.counter}/{self.early_stopping.patience}"
             )
- 
-            #salviamo il miglior checkpoint
-            if val_loss < self.best_val_loss:
+
+            # FIX: prima chiamavamo self.early_stopping.step(val_loss) DOPO aver già
+            # deciso se salvare il checkpoint confrontando val_loss con self.best_val_loss.
+            # Le due variabili (self.best_val_loss e self.early_stopping.best_loss)
+            # tracciavano la "migliore loss" con soglie diverse (self.best_val_loss
+            # si aggiornava per qualunque miglioramento, anche minimo, mentre
+            # l'early stopping resetta il counter solo se il miglioramento supera
+            # min_delta). Questo poteva creare un disallineamento: un checkpoint
+            # veniva salvato per un'epoca che l'early stopping non considerava
+            # affatto un "vero" miglioramento.
+            # Ora aggiorniamo prima l'early stopping e usiamo il suo stesso criterio
+            # (counter azzerato = miglioramento reale secondo min_delta) per decidere
+            # se salvare il checkpoint, cosi le due logiche restano sempre coerenti.
+            should_stop = self.early_stopping.step(val_loss)
+
+            #salviamo il miglior checkpoint solo quando c'è stato un vero miglioramento
+            #(stessa soglia min_delta usata dall'early stopping)
+            if self.early_stopping.counter == 0:
                 self.best_val_loss = val_loss
                 ckpt_path = os.path.join(
                     self.cfg.CHECKPOINT_DIR, f"{model_name}_best.pt"
                 )
                 torch.save(self.model.state_dict(), ckpt_path)
                 print(f"Checkpoint salvato (val_loss={val_loss:.4f})")
- 
+
             #early stopping
-            if self.early_stopping.step(val_loss):
+            if should_stop:
                 print(
                     f"\n[Early Stopping] Nessun miglioramento per "
                     f"{self.early_stopping.patience} epoche. "
                     f"Training fermato all'epoca {epoch+1}."
                 )
                 break
- 
+
         #ripristiniamo il modello migliore con il checkpoint
         best_ckpt = os.path.join(self.cfg.CHECKPOINT_DIR, f"{model_name}_best.pt")
         self.model.load_state_dict(torch.load(best_ckpt, map_location=self.cfg.DEVICE))
         print(f"[Trainer] Miglior modello ripristinato da: {best_ckpt}")
- 
+
         #salviamo la history per l'analisi e i plot
         history_df   = pd.DataFrame(self.history)
         history_path = os.path.join(
@@ -157,5 +172,5 @@ class Trainer:
         )
         history_df.to_csv(history_path, index_label="epoch")
         print(f"History salvata in: {history_path}")
- 
+
         return self.history
