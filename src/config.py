@@ -69,5 +69,5 @@ class Config:
 
     def set_new_data(self, new_data_dir, csv_name):
         import os
-        self.DATADIR = new_data_dir
+        self.DATA_DIR = new_data_dir
         self.CSV_PATH = os.path.join(new_data_dir, csv_name)
