@@ -11,16 +11,10 @@ class SagiDatasetBuilder:
         rows = []
         missing = []
 
-        # Rinominiamo la variabile temporanea per gestire la colonna troncata nell'immagine
-        # Assumiamo che la colonna inizi con 'inpainting_' (es. inpainting_model)
-        inpainting_col = next((col for col in df.columns if col.startswith('inpainting_')), None)
 
-        if inpainting_col:
-            # Filtriamo per hdpainter
-            df_filtered = df[df[inpainting_col] == 'hdpainter']
-        else:
-            # Fallback se non trova la colonna: cerca nel path
-            df_filtered = df[df['img_path'].str.contains('hdpainter', na=False)]
+        # Filtriamo per hdpainter
+        df_filtered = df[df["inpainting_model"] == 'hdpainter']
+
 
         # Filtriamo per assicurarci di prendere solo il dataset COCO
         df_filtered = df_filtered[df_filtered['src_path'].str.contains('coco', na=False)]
