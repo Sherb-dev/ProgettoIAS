@@ -75,3 +75,6 @@ class Config:
     def debug_paths(self):
         print(self.DATA_DIR)
         print(self.CSV_PATH)
+
+    def set_undersampling(self, limit):
+        self.DATASET_SIZE = limit
