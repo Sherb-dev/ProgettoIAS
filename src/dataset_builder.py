@@ -1,5 +1,4 @@
 import os
-import glob
 import pandas as pd
 from src.config import Config
 
@@ -12,53 +11,55 @@ class SagiDatasetBuilder:
         rows = []
         missing = []
 
-        # Filtro opzionale se il CSV ha colonne esplicite per dataset e method
-        if 'dataset' in df.columns and 'method' in df.columns:
-            df_filtered = df[(df['dataset'] == 'coco') & (df['method'] == 'hdpainter')]
+        # Rinominiamo la variabile temporanea per gestire la colonna troncata nell'immagine
+        # Assumiamo che la colonna inizi con 'inpainting_' (es. inpainting_model)
+        inpainting_col = next((col for col in df.columns if col.startswith('inpainting_')), None)
+
+        if inpainting_col:
+            # Filtriamo per hdpainter
+            df_filtered = df[df[inpainting_col] == 'hdpainter']
         else:
-            df_filtered = df
+            # Fallback se non trova la colonna: cerca nel path
+            df_filtered = df[df['img_path'].str.contains('hdpainter', na=False)]
+
+        # Filtriamo per assicurarci di prendere solo il dataset COCO
+        df_filtered = df_filtered[df_filtered['src_path'].str.contains('coco', na=False)]
 
         for _, r in df_filtered.iterrows():
-            filename = str(r.get("filename", r.get("image_id", "")))
-            stem = os.path.splitext(filename)[0]
-            
-            # Lo split (train/val/test) in cui si trova l'immagine 
-            split_folder = str(r.get("split", "train"))
+            # Il CSV presenta percorsi con backslash tipici di Windows (es. sagid\train\...)
+            # Sostituiamo i backslash con il separatore del sistema operativo corrente
+            src_rel = str(r["src_path"]).replace('\\', os.sep)
+            img_rel = str(r["img_path"]).replace('\\', os.sep)
+            mask_rel = str(r["mask_path"]).replace('\\', os.sep)
 
-            # Ricostruzione percorsi con wildcard
-            orig_path = os.path.join(self.cfg.DATA_DIR, split_folder, "coco", "original", f"{stem}.jpg")
-            mask_pattern = os.path.join(self.cfg.DATA_DIR, split_folder, "coco", "mask", f"coco_{stem}_*.png")
-            manip_pattern = os.path.join(self.cfg.DATA_DIR, split_folder, "coco", "hdpainter", f"coco_{stem}_*.png")
-
-            # Ricerca dei file corrispondenti ai pattern
-            mask_matches = glob.glob(mask_pattern)
-            manip_matches = glob.glob(manip_pattern)
-
-            mask_path = mask_matches[0] if mask_matches else ""
-            manip_path = manip_matches[0] if manip_matches else ""
+            # Costruzione dei percorsi assoluti
+            orig_path = os.path.join(self.cfg.DATA_DIR, src_rel)
+            manip_path = os.path.join(self.cfg.DATA_DIR, img_rel)
+            mask_path = os.path.join(self.cfg.DATA_DIR, mask_rel)
 
             # Tracciamento file mancanti
             if not os.path.exists(orig_path): missing.append(orig_path)
-            if not mask_path: missing.append(mask_pattern)
-            if not manip_path: missing.append(manip_pattern)
+            if not os.path.exists(mask_path): missing.append(mask_path)
+            if not os.path.exists(manip_path): missing.append(manip_path)
 
-            # Costruzione della riga solo se la tripla è completa, 
-            # rispettando esattamente il vecchio header
-            if os.path.exists(orig_path) and mask_path and manip_path:
+            if os.path.exists(orig_path) and os.path.exists(mask_path) and os.path.exists(manip_path):
+                # Usiamo il nome del file originale per ricavare lo stem
+                stem = os.path.splitext(os.path.basename(orig_path))[0]
+                
                 rows.append({
                     "image_id": f"sagi_coco_{stem}", 
                     "orig_path": orig_path,
                     "manip_path": manip_path,
                     "mask_path": mask_path,
-                    "category_name": r.get("category_name", "unknown"),
-                    "target_prompt": r.get("target_prompt", ""),
+                    "category_name": str(r.get("type", "unknown")),
+                    "target_prompt": str(r.get("prompt", "")),
                     "source": "sagi_hdpainter", 
                     "mask_type": "png",
-                    "split": split_folder  # Necessario per mantenere il partizionamento a valle
+                    "split": str(r.get("split", "train")) 
                 })
 
         if missing:
-            print(f"ATTENZIONE: {len(missing)} file/pattern mancanti (ne mostro 5):")
+            print(f"ATTENZIONE: {len(missing)} file mancanti (ne mostro 5):")
             for m in list(set(missing))[:5]:
                 print(f"  - {m}")
 
@@ -70,7 +71,6 @@ class SagiDatasetBuilder:
 
         print(f"Esecuzione undersampling stratificato a {self.cfg.DATASET_SIZE} campioni...")
         
-        # Calcolo le proporzioni attuali degli split nel dataset per mantenerle inalterate
         split_counts = df["split"].value_counts(normalize=True)
         sampled_parts = []
         
@@ -83,7 +83,6 @@ class SagiDatasetBuilder:
             
         df_sampled = pd.concat(sampled_parts, ignore_index=True)
         
-        # Correzione per eventuali discrepanze dovute agli arrotondamenti (es. 99 campioni invece di 100)
         diff = self.cfg.DATASET_SIZE - len(df_sampled)
         if diff > 0:
             remaining = df.drop(df_sampled.index)
@@ -98,7 +97,6 @@ class SagiDatasetBuilder:
         manifest = self._build_dataset()
         print(f"Trovate {len(manifest)} coppie valide prima dell'undersampling.")
 
-        # Esecuzione undersampling
         manifest = self._undersample(manifest)
         print(f"Totale campioni finali: {len(manifest)}")
 
@@ -111,7 +109,6 @@ class SagiDatasetBuilder:
         final_columns = [col for col in expected_columns if col in manifest.columns]
         manifest = manifest[final_columns]
 
-        # Salvataggio
         os.makedirs(os.path.dirname(self.cfg.MANIFEST_OUT), exist_ok=True)
         manifest.to_csv(self.cfg.MANIFEST_OUT, index=False)
         print(f"Manifest salvato con successo in: {self.cfg.MANIFEST_OUT}")
