@@ -78,7 +78,7 @@ class Trainer:
  
         context = torch.enable_grad() if train else torch.no_grad() #aggiorniamo i pesi (gradienti attivi) solo se train=True
         with context:
-            for image, mask, label in tqdm(loader, desc=desc, mininterval=10.0): #il loader fornisce un batch alla volta
+            for image, mask, label in tqdm(loader, desc=desc): #il loader fornisce un batch alla volta
                 #trasferiamo le immagini dalla cpu alla gpu
                 image = image.to(self.cfg.DEVICE)
                 mask  = mask.to(self.cfg.DEVICE)
