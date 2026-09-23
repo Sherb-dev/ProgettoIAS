@@ -81,3 +81,9 @@ class Config:
 
     def set_num_workers(self, num_workers):
         self.NUM_WORKERS = num_workers
+
+    def set_training(self, batch_size, epochs, lr):
+        # --- Training ---
+        self.BATCH_SIZE = batch_size
+        self.EPOCHS = epochs
+        self.LR = lr
