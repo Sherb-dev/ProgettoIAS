@@ -80,4 +80,4 @@ class Config:
         self.DATASET_SIZE = limit
 
     def set_num_workers(self, num_workers):
-        NUM_WORKERS = num_workers
+        self.NUM_WORKERS = num_workers
