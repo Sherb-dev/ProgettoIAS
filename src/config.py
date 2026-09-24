@@ -87,3 +87,6 @@ class Config:
         self.BATCH_SIZE = batch_size
         self.EPOCHS = epochs
         self.LR = lr
+
+    def set_new_checkpoint(self, new_ckpt_path: str):
+        self.CHECKPOINT_DIR = new_ckpt_path
