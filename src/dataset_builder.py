@@ -364,17 +364,17 @@ class CrossDatasetBuilder:
       orig_map = {
           f.stem: str(f.resolve())
           for f in img_dir.iterdir()
-          if f.is_file() and f.suffix.lower() in valid_exts
+          if f.is_file() and f.suffix.lower() in valid_exts and not f.name.startswith(".")
       }
       manip_map = {
           f.stem: str(f.resolve())
           for f in manip_dir.iterdir()
-          if f.is_file() and f.suffix.lower() in valid_exts
+          if f.is_file() and f.suffix.lower() in valid_exts and not f.name.startswith(".")
       }
       mask_map = {
           f.stem: str(f.resolve())
           for f in mask_dir.iterdir()
-          if f.is_file() and f.suffix.lower() in valid_exts
+          if f.is_file() and f.suffix.lower() in valid_exts and not f.name.startswith(".")
       }
 
       # Intersezione delle triplette meno quelle presenti nel CSV
