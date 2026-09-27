@@ -1156,3 +1156,100 @@ class AnalisiPredizioni:
             print(f"[Debug] Plot confidenza/errori salvato in: {out}")
             
         plt.show()
+
+    @staticmethod
+    def debug_predictions(model, test_loader, cfg, n=32, save_fig=False):
+        model = model.to(cfg.DEVICE)
+        model.eval()
+        # dimesnione plot
+        fig, axes = plt.subplots(n, 4, figsize=(12, 3 * n))
+        results = {
+            "scores": [],
+            "labels": []
+        }
+
+        with torch.no_grad():
+            for images, masks, labels in test_loader:
+                for i in range(min(n, images.size(0))):
+                    img   = images[i]
+                    gt    = masks[i]
+                    label = labels[i].item()
+
+                    seg_logits, cls_logits = model(img.unsqueeze(0).to(cfg.DEVICE))
+                    prob_mask = torch.sigmoid(seg_logits).squeeze().cpu()
+                    cls_score = torch.sigmoid(cls_logits).item()
+
+                    results["scores"].append(cls_score)
+                    results["labels"].append(label)
+
+                    img_np = (img.permute(1, 2, 0).numpy() * 0.5 + 0.5).clip(0, 1)
+
+                    # 1. Immagine di input
+                    axes[i][0].imshow(img_np)
+                    axes[i][0].set_title(f"Input | label={int(label)}")
+
+                    # 2. Ground Truth Mask
+                    axes[i][1].imshow(gt.squeeze(), cmap="gray", vmin=0.0, vmax=1.0)
+                    axes[i][1].set_title("GT mask")
+
+                    # 3. Prob Mask con scala fissa [0, 1] e colorbar affianco
+                    im_prob = axes[i][2].imshow(prob_mask, cmap="hot", vmin=0.0, vmax=1.0)
+                    axes[i][2].set_title(f"Prob mask | max={prob_mask.max():.2f}")
+                    fig.colorbar(im_prob, ax=axes[i][2], fraction=0.046, pad=0.04)
+
+                    # 4. Predizione binaria con soglia a 0.5
+                    axes[i][3].imshow(prob_mask > 0.5, cmap="gray", vmin=0.0, vmax=1.0)
+                    axes[i][3].set_title(f"Pred (>0.5) | cls={cls_score:.2f}")
+
+                break
+
+        plt.tight_layout()
+        if save_fig:
+            plt.savefig(os.path.join(cfg.FIGURES_DIR, "debug_predictions.png"))
+        plt.show()
+        return results
+
+    staticmethod
+    def _compute_mask_coverage(mask_path: str) -> float:
+        """
+        Calcola la frazione [0.0, 1.0] di pixel positivi (> 0) nella maschera.
+        """
+        with Image.open(mask_path) as img:
+            gray = img.convert("L")
+            arr = np.asarray(gray)
+            return float(np.count_nonzero(arr > 0) / arr.size)
+
+    @staticmethod
+    def filter_manifest_by_mask_size(
+        df_manifest: pd.DataFrame,
+        target_category: str,
+        small_threshold: float = 0.05,
+        medium_threshold: float = 0.20,
+    ) -> pd.DataFrame:
+        """
+        Prende un DataFrame manifest e restituisce un nuovo DataFrame manifest
+        filtrato in base alla dimensione dell'area occupata dalla maschera.
+
+        Categorie:
+        - 'small':  area <= small_threshold (default <= 5%)
+        - 'medium': small_threshold < area <= medium_threshold (default 5% < area <= 20%)
+        - 'large':  area > medium_threshold (default > 20%)
+        """
+        target = target_category.strip().lower()
+        valid_categories = {"small", "medium", "large"}
+        if target not in valid_categories:
+            raise ValueError(f"target_category deve essere una tra {valid_categories}, ricevuto: {target_category}")
+
+        # Calcolo della frazione di area occupata per ogni riga
+        coverages = [AnalisiPredizioni._compute_mask_coverage(p) for p in df_manifest["mask_path"]]
+
+        # Condizioni di filtraggio
+        if target == "small":
+            mask_condition = [c <= small_threshold for c in coverages]
+        elif target == "medium":
+            mask_condition = [small_threshold < c <= medium_threshold for c in coverages]
+        else:  # large
+            mask_condition = [c > medium_threshold for c in coverages]
+
+        # Restituisce il sottoinsieme con indici resettati e colonne intatte
+        return df_manifest.loc[mask_condition].reset_index(drop=True)

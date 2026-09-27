@@ -232,3 +232,176 @@ class MergedDatasetSplitter:
         print(f"\nManifest salvato in: {self.cfg.MANIFEST_OUT}")
 
         return manifest
+
+
+def detect_source(path: str) -> str:
+    """Il CSV non ha una colonna esplicita per la sorgente (coco/raise/openimages),
+    ma il nome compare sempre nel path."""
+    p = path.lower() #converte in lowercase
+    for s in ("coco", "raise", "openimages"): #scrorre tra le possibili sorgenti
+        if s in p:
+            return s
+    return "unknown"
+
+
+class CrossDatasetBuilder:
+  def build_sagid_manifest(csv_path: str, local_root: str,
+                            split_filter: str = "test",
+                            source_filter: str = "raise",
+                            inpainting_filter = "hdpainter",
+                            skip_missing: bool = False):
+    df = pd.read_csv(csv_path) #carica il csv du un dataframe
+    df["detected_source"] = df["img_path"].apply(detect_source) #crea una nuova colonna con la sorgente
+
+    subset = df[(df["split"] == split_filter) & (df["detected_source"] == source_filter) & (df["inpainting_model"] == inpainting_filter)].copy() #crea  subset con colonna split e detected source passate alla funzione
+    print(f"Righe selezionate (split={split_filter}, source={source_filter}): {len(subset)}")
+
+    def to_local_path(rel_path: str) -> str: #converte il percorso del csv in un percorso valido
+        """Il CSV usa path del tipo 'sagid/<split>/<source>/...', ma local_root
+        punta gia' direttamente alla cartella estratta che contiene original/,
+        brushnet/, ecc. Quindi basta togliere il prefisso 'sagid/<split>/<source>/'
+        e unire il resto a local_root."""
+        rel_path = rel_path.replace("\\", "/")  # backslash Windows -> separatore locale
+
+        parts = rel_path.split("/") #divide il percorso in una lista di cartelle
+        if len(parts) >= 4 and parts[0] == "sagid": #controlla se il percorso ha la strttura attesa
+            tail = "/".join(parts[3:])   # scarta "sagid/<split>/<source>/"
+        else:
+            tail = rel_path
+
+        return os.path.join(local_root, tail) #unisce la cartella root alla "coda" appena calcolata
+
+    rows, missing, skipped = [], [], 0 #conterranno dati validi, lista file non trovati, contatore righe saltate
+    for idx, r in subset.iterrows(): #itera su igni riga
+        #calcola i percorsi locali effettivi
+        orig_path  = to_local_path(r["src_path"])
+        manip_path = to_local_path(r["img_path"])
+        mask_path  = to_local_path(r["mask_path"])
+
+        row_missing = [p for p in (orig_path, manip_path, mask_path) if not os.path.exists(p)]
+
+        if row_missing: #se manca almeno un file
+            missing.extend(row_missing) #aggiunge i percorsi alla lista missing
+            if skip_missing:
+                skipped += 1
+                continue  # salta questa riga, non finisce nel manifest
+
+        rows.append({
+            "image_id":   f"sagid_{idx}",
+            "orig_path":  orig_path,
+            "manip_path": manip_path,
+            "mask_path":  mask_path,
+            "source":     source_filter,
+            "split":      "test",
+        })
+
+    if missing: #se mancano dei file
+        print(f"ATTENZIONE: {len(missing)} file mancanti su {len(subset) * 3} referenziati.")
+        if skip_missing:
+            print(f"Righe scartate dal manifest: {skipped} su {len(subset)}")
+        else:
+            print("Esempi:")
+            for m in missing[:10]:
+                print(f"  - {m}")
+            raise FileNotFoundError(
+                "Alcuni file referenziati nel CSV non sono presenti nella porzione scaricata. "
+                "Controlla SAGID_ROOT e verifica di aver estratto correttamente l'archivio."
+            )
+
+    return pd.DataFrame(rows)
+
+  @staticmethod
+  def build_manifest_tokenpainter(
+      root_dir: str | Path,
+      exclude_csv: str | Path | pd.DataFrame,
+      source_filter: str = "ds1",
+      sample_size: int = 1000,
+      random_state: int | None = 42,
+      split: str = "test",
+      image_dir_name: str = "image",
+      inpaint_dir_name: str = "inpaint",
+      mask_dir_name: str = "mask",
+      valid_exts: tuple[str, ...] = (".png", ".jpg", ".jpeg"),
+      ) -> pd.DataFrame:
+      """Costruisce un DataFrame manifest associando per stem i file presenti
+
+      nelle sottocartelle, escludendo gli elementi con source="ds1" presenti
+      nel CSV fornito e campionando casualmente fino a sample_size righe.
+      """
+      root = Path(root_dir)
+      img_dir = root / image_dir_name
+      manip_dir = root / inpaint_dir_name
+      mask_dir = root / mask_dir_name
+
+      # Controllo presenza directory principali
+      for d in (img_dir, manip_dir, mask_dir):
+          if not d.is_dir():
+              raise FileNotFoundError(f"Directory non trovata: {d}")
+
+      # Caricamento CSV ed estrazione identificatori/stem da escludere
+      if isinstance(exclude_csv, (str, Path)):
+          df_exclude = pd.read_csv(exclude_csv)
+      elif isinstance(exclude_csv, pd.DataFrame):
+          df_exclude = exclude_csv
+      else:
+          raise TypeError("exclude_csv deve essere una stringa, un Path o un pd.DataFrame.")
+
+      # Filtro su source == "ds1"
+      df_filtered = df_exclude[df_exclude["source"] == "ds1"]
+
+      # Ricavo gli stem da escludere: verifica se esiste una colonna 'stem' o usa il nome del file da orig_path
+      if "stem" in df_filtered.columns:
+          excluded_stems = set(df_filtered["stem"].astype(str))
+      elif "orig_path" in df_filtered.columns:
+          excluded_stems = {Path(p).stem for p in df_filtered["orig_path"].dropna()}
+      elif "image_id" in df_filtered.columns:
+          excluded_stems = set(df_filtered["image_id"].astype(str))
+      else:
+          raise KeyError("Il CSV deve contenere una colonna tra 'stem', 'orig_path' o 'image_id'.")
+
+      # Dizionari {stem: percorso_completo}
+      orig_map = {
+          f.stem: str(f.resolve())
+          for f in img_dir.iterdir()
+          if f.is_file() and f.suffix.lower() in valid_exts
+      }
+      manip_map = {
+          f.stem: str(f.resolve())
+          for f in manip_dir.iterdir()
+          if f.is_file() and f.suffix.lower() in valid_exts
+      }
+      mask_map = {
+          f.stem: str(f.resolve())
+          for f in mask_dir.iterdir()
+          if f.is_file() and f.suffix.lower() in valid_exts
+      }
+
+      # Intersezione delle triplette meno quelle presenti nel CSV
+      available_stems = (orig_map.keys() & manip_map.keys() & mask_map.keys()) - excluded_stems
+      common_stems = sorted(available_stems)
+
+      rows = []
+      for stem in common_stems:
+          rows.append(
+              {
+                  "orig_path": orig_map[stem],
+                  "manip_path": manip_map[stem],
+                  "mask_path": mask_map[stem],
+                  "source": source_filter,
+                  "split": split,
+              }
+          )
+
+      df_result = pd.DataFrame(rows)
+
+      # Campionamento casuale di 1000 elementi (o meno se non disponibili)
+      if not df_result.empty:
+          n_samples = min(sample_size, len(df_result))
+          df_result = df_result.sample(n=n_samples, random_state=random_state).reset_index(drop=True)
+
+      # Assegnazione image_id sequenziale sul campione finale
+      df_result["image_id"] = [f"sagid_{idx}" for idx in range(len(df_result))]
+
+      # Riorganizzazione colonne per mantenere image_id all'inizio
+      cols = ["image_id", "orig_path", "manip_path", "mask_path", "source", "split"]
+      return df_result[cols]
